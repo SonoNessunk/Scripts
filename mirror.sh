@@ -5,5 +5,6 @@ adb disconnect
 adb connect 192.168.1.100
 
 # Avvia scrcpy
-#scrcpy --stay-awake --no-mouse-hover --audio-dup --video-bit-rate 16M -e -G
-scrcpy --stay-awake --no-mouse-hover --video-bit-rate 16M -e -G
+# scrcpy -w --no-mouse-hover --audio-dup -b 16M -e -G
+# scrcpy -w --no-mouse-hover -b 16M -e -G
+scrcpy -w --no-mouse-hover -K -b 16M -e --tcpip -m 1168

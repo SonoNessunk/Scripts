@@ -12,7 +12,7 @@ echo "Linking together"
 pw-link VirtualSpeaker:monitor_FL VirtualMic:input_FL
 pw-link VirtualSpeaker:monitor_FR VirtualMic:input_FR
 echo " "
-echo "Loopback"
+#echo "Loopback"
 #Add loopback to hear comment out if you wish to disable
 #pactl load-module module-loopback sink_name="LoopbackSync" source="VirtualSpeaker.monitor"
-notify-send "🎧 Audio Virtuale" "Speaker e microfono virtuali attivati"
+#notify-send "🎧 Audio Virtuale" "Speaker e microfono virtuali attivati"
