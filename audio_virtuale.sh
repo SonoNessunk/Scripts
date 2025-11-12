@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 echo "VirtualSpeaker"
 # Create a virtual sink that can be set as a monitor in OBS

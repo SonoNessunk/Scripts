@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 # Controllo formato con grep invece di [[ =~ ]]
 if ! echo "$1" | grep -qiE '^#?[0-9a-f]{6}$'; then
