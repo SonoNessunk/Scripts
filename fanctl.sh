@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# fanctl.sh — Controllo ventole per hwmon3/device
+# Uso: sudo ./fanctl.sh
 
 HWMON="/sys/class/hwmon/hwmon3/device"
 
@@ -14,180 +16,232 @@ fi
 
 # ── Funzioni helper ──────────────────────────────────────
 
-# Legge il valore di un file sysfs, ritorna "N/A" se non esiste
 read_sysfs() {
     local path="$1"
     [[ -r "$path" ]] && cat "$path" 2>/dev/null || echo "N/A"
 }
 
-# Converte valore PWM (0-255) in percentuale
 pwm_to_pct() {
     local pwm="$1"
     [[ "$pwm" == "N/A" ]] && echo "N/A" && return
-    printf "%.0f" "$(echo "scale=2; $pwm * 100 / 255" | bc)"
+    echo $(( pwm * 100 / 255 ))
 }
 
-# Converte percentuale in valore PWM (0-255)
 pct_to_pwm() {
     local pct="$1"
-    printf "%.0f" "$(echo "scale=2; $pct * 255 / 100" | bc)"
+    echo $(( pct * 255 / 100 ))
 }
 
-# Legge lo stato enable e lo mostra in modo leggibile
 enable_label() {
     case "$1" in
         0) echo -e "${RED}OFF${RESET}" ;;
         1) echo -e "${YELLOW}MANUALE${RESET}" ;;
         2) echo -e "${GREEN}AUTO${RESET}" ;;
-        *) echo "Sconosciuto ($1)" ;;
+        *) echo "N/A" ;;
     esac
 }
 
-# ── Mostra stato attuale ─────────────────────────────────
-show_status() {
-    clear
-    echo -e "\n${BOLD}${CYAN}══════════════════════════════${RESET}"
-    echo -e "${BOLD}  Stato ventole — $HWMON${RESET}"
-    echo -e "${BOLD}${CYAN}══════════════════════════════${RESET}"
+# ── Layout ───────────────────────────────────────────────
+FAN_ROW_OFFSET=3
+FAN_BLOCK=5   # righe per ventola (blank + nome + modalità + pwm + rpm)
 
-    for i in 1 2 3; do
-        local pwm_path="$HWMON/pwm$i"
-        local enable_path="$HWMON/pwm${i}_enable"
-        local fan_path="$HWMON/fan${i}_input"
+FANS=()
+for _i in 1 2 3; do
+    [[ -e "$HWMON/pwm${_i}" ]] && FANS+=("$_i")
+done
 
-        # Salta se il file pwm non esiste
-        [[ ! -e "$pwm_path" ]] && continue
-
-        local pwm_val enable_val rpm pct mode
-        pwm_val=$(read_sysfs "$pwm_path")
-        enable_val=$(read_sysfs "$enable_path")
-        rpm=$(read_sysfs "$fan_path")
-        pct=$(pwm_to_pct "$pwm_val")
-        mode=$(enable_label "$enable_val")
-
-        echo -e "\n  ${BOLD}Ventola $i${RESET}"
-        echo -e "    Modalità : $mode"
-        echo -e "    PWM      : ${pwm_val}/255 (${pct}%)"
-        echo -e "    RPM      : ${rpm} giri/min"
-    done
-
-    echo -e "\n${BOLD}${CYAN}══════════════════════════════${RESET}\n"
+fan_base_row() {
+    echo $(( FAN_ROW_OFFSET + $1 * FAN_BLOCK ))
 }
 
-# ── Imposta modalità (auto/manuale) per una ventola ─────
+menu_row() {
+    echo $(( FAN_ROW_OFFSET + ${#FANS[@]} * FAN_BLOCK + 1 ))
+}
+
+# ── Disegna valori di una ventola ────────────────────────
+draw_fan_values() {
+    local slot="$1" fan="$2"
+    local base
+    base=$(fan_base_row "$slot")
+
+    local pwm_val enable_val rpm pct mode
+    pwm_val=$(read_sysfs "$HWMON/pwm${fan}")
+    enable_val=$(read_sysfs "$HWMON/pwm${fan}_enable")
+    rpm=$(read_sysfs "$HWMON/fan${fan}_input")
+    pct=$(pwm_to_pct "$pwm_val")
+    mode=$(enable_label "$enable_val")
+
+    # tput cup ROW COL  — sposta cursore alla riga ROW, colonna COL
+    # tput el           — cancella dal cursore a fine riga (evita residui)
+    tput cup $(( base + 1 )) 0; tput el; echo -e "  ${BOLD}Ventola ${fan}${RESET}"
+    tput cup $(( base + 2 )) 0; tput el; echo -e "    Modalità : $mode"
+    tput cup $(( base + 3 )) 0; tput el; echo -e "    PWM      : ${pwm_val}/255 (${pct}%)"
+    tput cup $(( base + 4 )) 0; tput el; echo -e "    RPM      : ${rpm} giri/min"
+}
+
+# ── Disegna struttura fissa ──────────────────────────────
+draw_static() {
+    clear
+    tput cup 0 0; echo -e "${BOLD}${CYAN}══════════════════════════════${RESET}"
+    tput cup 1 0; echo -e "${BOLD}  Stato ventole  [live, 1s]${RESET}"
+    tput cup 2 0; echo -e "${BOLD}${CYAN}══════════════════════════════${RESET}"
+
+    local slot=0
+    for fan in "${FANS[@]}"; do
+        local base
+        base=$(fan_base_row "$slot")
+        tput cup $base 0; echo ""
+        draw_fan_values "$slot" "$fan"
+        (( slot++ ))
+    done
+
+    local mr
+    mr=$(menu_row)
+    tput cup $mr 0
+    echo -e "${BOLD}${CYAN}══════════════════════════════${RESET}"
+    echo ""
+    echo -e "${BOLD}Cosa vuoi fare?${RESET}"
+    echo "  1) Metti una ventola in AUTO"
+    echo "  2) Metti una ventola in MANUALE + imposta velocità"
+    echo "  3) Imposta velocità (ventola già in manuale)"
+    echo "  4) Metti TUTTE in AUTO"
+    echo "  5) Metti TUTTE al 100% (manuale)"
+    echo "  q) Esci"
+    echo ""
+}
+
+# ── Background job: aggiorna valori ogni secondo ─────────
+LIVE_PID=""
+
+start_live() {
+    (
+        while true; do
+            local slot=0
+            for fan in "${FANS[@]}"; do
+                draw_fan_values "$slot" "$fan"
+                (( slot++ ))
+            done
+            tput cup $(( $(menu_row) + 9 )) 0
+            sleep 1
+        done
+    ) &
+    LIVE_PID=$!
+}
+
+stop_live() {
+    if [[ -n "$LIVE_PID" ]]; then
+        kill "$LIVE_PID" 2>/dev/null
+        wait "$LIVE_PID" 2>/dev/null
+        LIVE_PID=""
+    fi
+}
+
+goto_input() {
+    tput cup $(( $(menu_row) + 9 )) 0
+}
+
+# ── Imposta modalità ─────────────────────────────────────
 set_mode() {
-    local fan="$1"   # numero ventola (1, 2, 3)
-    local mode="$2"  # "auto" o "manual"
+    local fan="$1" mode="$2"
     local enable_path="$HWMON/pwm${fan}_enable"
 
-    [[ ! -e "$enable_path" ]] && echo -e "${RED}pwm${fan}_enable non trovato.${RESET}" && return 1
+    [[ ! -e "$enable_path" ]] && return 1
+    [[ ! -w "$enable_path" ]] && return 1
 
     local val
     [[ "$mode" == "auto" ]] && val=2 || val=1
 
-    echo "$val" > "$enable_path"
-    local result=$?
-
-    if [[ $result -ne 0 ]]; then
-        # Alcuni driver non supportano mode 2, prova con 0
-        echo -e "${YELLOW}Attenzione:${RESET} mode $val non supportato, provo con 0..."
-        echo "0" > "$enable_path"
+    if ! echo "$val" > "$enable_path" 2>/dev/null; then
+        echo "0" > "$enable_path" 2>/dev/null || true
     fi
-
-    echo -e "  Ventola $fan → $(enable_label "$val")"
 }
 
-# ── Imposta velocità manuale ─────────────────────────────
+# ── Imposta velocità ─────────────────────────────────────
 set_speed() {
-    local fan="$1"   # numero ventola
-    local pct="$2"   # percentuale 0-100
+    local fan="$1" pct="$2"
     local pwm_path="$HWMON/pwm${fan}"
     local enable_path="$HWMON/pwm${fan}_enable"
 
-    [[ ! -e "$pwm_path" ]] && echo -e "${RED}pwm${fan} non trovato.${RESET}" && return 1
+    [[ ! -e "$pwm_path" ]] && return 1
+    [[ ! -w "$pwm_path" ]] && return 1
 
-    # Prima metti in modalità manuale
-    echo "1" > "$enable_path"
+    echo "1" > "$enable_path" 2>/dev/null || true
 
     local pwm_val
     pwm_val=$(pct_to_pwm "$pct")
-
-    # Clamp tra 0 e 255
     (( pwm_val < 0 ))   && pwm_val=0
     (( pwm_val > 255 )) && pwm_val=255
 
     echo "$pwm_val" > "$pwm_path"
-    echo -e "  Ventola $fan → ${pct}% (PWM ${pwm_val}/255)"
 }
 
 # ── Menu interattivo ─────────────────────────────────────
 menu() {
+    draw_static
+    start_live
+
+    trap 'stop_live; tput cnorm; echo ""; exit 0' INT TERM
+
     while true; do
-        show_status
-        echo -e "${BOLD}Cosa vuoi fare?${RESET}"
-        echo "  1) Metti una ventola in AUTO"
-        echo "  2) Metti una ventola in MANUALE + imposta velocità"
-        echo "  3) Imposta velocità (ventola già in manuale)"
-        echo "  4) Metti TUTTE le ventole in AUTO"
-        echo "  5) Metti TUTTE le ventole al 100% (manuale)"
-        echo "  q) Esci"
-        echo
+        goto_input
         read -rp "Scelta: " choice
+
+        stop_live
 
         case "$choice" in
             1)
-                read -rp "  Numero ventola (1/2/3): " fn
+                goto_input; read -rp "  Numero ventola (${FANS[*]}): " fn
                 set_mode "$fn" "auto"
                 ;;
             2)
-                read -rp "  Numero ventola (1/2/3): " fn
-                read -rp "  Velocità % (0-100): " sp
+                goto_input; read -rp "  Numero ventola (${FANS[*]}): " fn
+                goto_input; read -rp "  Velocità % (0-100): " sp
                 set_speed "$fn" "$sp"
                 ;;
             3)
-                read -rp "  Numero ventola (1/2/3): " fn
-                read -rp "  Velocità % (0-100): " sp
+                goto_input; read -rp "  Numero ventola (${FANS[*]}): " fn
+                goto_input; read -rp "  Velocità % (0-100): " sp
                 set_speed "$fn" "$sp"
                 ;;
             4)
-                for i in 1 2 3; do
-                    [[ -e "$HWMON/pwm${i}_enable" ]] && set_mode "$i" "auto"
-                done
+                for fan in "${FANS[@]}"; do set_mode "$fan" "auto"; done
                 ;;
             5)
-                for i in 1 2 3; do
-                    [[ -e "$HWMON/pwm${i}" ]] && set_speed "$i" 100
-                done
+                for fan in "${FANS[@]}"; do set_speed "$fan" 100; done
                 ;;
             q|Q)
-                echo -e "\n${GREEN}Uscito.${RESET}\n"
+                stop_live
+                clear
+                echo -e "${GREEN}Uscito.${RESET}"
                 exit 0
                 ;;
             *)
-                echo -e "${RED}Scelta non valida.${RESET}"
+                goto_input
+                echo -e "${RED}  Scelta non valida.${RESET}"
+                sleep 0.8
                 ;;
         esac
-        sleep 0.5
+
+        draw_static
+        start_live
     done
 }
 
 # ── Modalità non interattiva (argomenti CLI) ─────────────
-# Uso: sudo ./fanctl.sh auto [fan]
-#      sudo ./fanctl.sh set <fan> <pct>
-#      sudo ./fanctl.sh status
 if [[ $# -gt 0 ]]; then
     case "$1" in
         status)
-            show_status ;;
+            for fan in "${FANS[@]}"; do
+                echo "Ventola $fan: PWM=$(read_sysfs "$HWMON/pwm${fan}") RPM=$(read_sysfs "$HWMON/fan${fan}_input")"
+            done ;;
         auto)
             fan="${2:-all}"
             if [[ "$fan" == "all" ]]; then
-                for i in 1 2 3; do [[ -e "$HWMON/pwm${i}_enable" ]] && set_mode "$i" "auto"; done
+                for f in "${FANS[@]}"; do set_mode "$f" "auto"; done
             else
                 set_mode "$fan" "auto"
             fi ;;
         set)
-            # sudo ./fanctl.sh set <fan> <pct>
             [[ -z "$2" || -z "$3" ]] && echo "Uso: sudo $0 set <fan> <pct>" && exit 1
             set_speed "$2" "$3" ;;
         *)
@@ -197,5 +251,4 @@ if [[ $# -gt 0 ]]; then
     exit 0
 fi
 
-# Nessun argomento → menu interattivo
 menu
