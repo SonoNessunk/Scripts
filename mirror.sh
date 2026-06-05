@@ -9,4 +9,4 @@ adb connect 192.168.1.100
 # scrcpy -w --no-mouse-hover -b 16M -e -G
 #scrcpy -w --no-mouse-hover -K -b 16M -e --tcpip -m 1168
 #scrcpy -w --no-mouse-hover -K -b 32M -e --tcpip
-scrcpy -w --no-mouse-hover -K -b 16M -e --tcpip
+scrcpy -w --no-mouse-hover -K -b 8M -e --tcpip
