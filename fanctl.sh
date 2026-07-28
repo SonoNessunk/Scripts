@@ -2,7 +2,7 @@
 # fanctl.sh — Controllo ventole per hwmon3/device
 # Uso: sudo ./fanctl.sh
 
-HWMON="/sys/class/hwmon/hwmon3/device"
+HWMON="/sys/devices/platform/f71882fg.656/"
 
 # ── Colori ──────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
