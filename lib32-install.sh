@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "Recupero elenco pacchetti lib32..."
+echo "Fetching lib32 package list..."
 
 mapfile -t multilib < <(pacman -Slq multilib | grep '^lib32-')
 
@@ -10,37 +10,52 @@ for pkg in "${multilib[@]}"; do
 done
 
 packages=()
+convert=()
 
 while read -r pkg; do
     [[ $pkg == lib32-* ]] && continue
-    echo "adesso -> $pkg"
+    echo "Check -> $pkg"
 
     lib32="lib32-$pkg"
 
     [[ -z ${available[$lib32]} ]] && continue
 
-    pacman -Q "$lib32" &>/dev/null && continue
+    if pacman -Q "$lib32" &>/dev/null; then
+        reason=$(pacman -Qi "$lib32" | awk -F': ' '/Install Reason/ {print $2}')
+
+        if [[ "$reason" == "Explicitly installed" ]]; then
+            convert+=("$lib32")
+        fi
+
+        continue
+    fi
 
     packages+=("$lib32")
 
 done < <(pacman -Qq)
 
-if ((${#packages[@]} == 0)); then
+if ((${#convert[@]})); then
     echo
-    echo "Nessun pacchetto lib32 da installare"
+    echo "Converting to dependencies:"
+    printf '   %s\n' "${convert[@]}"
+fi
+
+if ((!${#convert[@]} && !${#packages[@]})); then
+    echo "No lib32 packages to modify/install"
     exit 0
 fi
 
 echo
-echo "Verrano installati ${#packages[@]} pacchetti:"
+echo "${#packages[@]} packages will be installed:"
 printf '   %s\n' "${packages[@]}"
 
 echo
-read -rp "Procedere [y/N] " ans
+read -rp "Proceed [y/N] " ans
 
 if [[ $ans =~ ^[Yy]([Ee][Ss])?$ ]]; then
-    sudo pacman -S --needed "${packages[@]}"
+    ((${#convert[@]})) && sudo pacman -D --asdeps "${convert[@]}"
+    ((${#packages[@]})) && sudo pacman -S --asdeps --needed "${packages[@]}"
 else
-    echo "Operazione annulata"
+    echo "Operation cancelled"
 fi
 
