@@ -13,4 +13,6 @@ fi
 
 echo "Starting scrcpy on $TARGET..."
 
-scrcpy -s "$TARGET" -w --no-mouse-hover -K -b 8M -G
+#scrcpy -s "$TARGET" -w --no-mouse-hover -K -b 8M -G
+
+scrcpy -s "$TARGET" -S -t -G -K -b 16M --video-codec=h264 --audio-codec=opus --audio-bit-rate=320K
