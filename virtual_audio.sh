@@ -30,4 +30,5 @@ until pw-link VirtualSpeaker:monitor_FL VirtualMic:input_FL 2>/dev/null && \
     fi
 done
 
-notify-send "Virtual Audio" "Virtual audio synced and ready"
+notify-send "🎧 Virtual Audio" "Virtual audio synced and ready"
+
